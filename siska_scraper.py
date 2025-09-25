@@ -251,10 +251,10 @@ class SiskaScraper:
             # Check if login was successful
             if self._check_login_success(response):
                 self.is_logged_in = True
-                print("✓ Login successful!")
+                print("Login successful!")
                 return True
             else:
-                print("✗ Login failed!")
+                print("Login failed!")
                 print("Response URL:", response.url)
                 print("Response text preview:", response.text[:500])
                 return False
