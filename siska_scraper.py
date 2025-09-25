@@ -48,7 +48,7 @@ class SiskaScraper:
             oldest_request = self.request_times[0]
             wait_time = 60 - (current_time - oldest_request).total_seconds()
             if wait_time > 0:
-                print(f"⏳ Rate limit reached. Waiting {wait_time:.1f} seconds...")
+                print(f"Rate limit reached. Waiting {wait_time:.1f} seconds...")
                 time.sleep(wait_time)
         
         # Ensure minimum delay between requests
@@ -56,7 +56,7 @@ class SiskaScraper:
             time_since_last = (current_time - self.last_request_time).total_seconds()
             if time_since_last < self.config.request_delay:
                 wait_time = self.config.request_delay - time_since_last
-                print(f"⏳ Waiting {wait_time:.1f} seconds between requests...")
+                print(f"Waiting {wait_time:.1f} seconds between requests...")
                 time.sleep(wait_time)
         
         # Record this request
@@ -74,7 +74,7 @@ class SiskaScraper:
         
         for attempt in range(self.config.max_retries + 1):
             try:
-                print(f"🌐 Making {method.upper()} request to {url} (attempt {attempt + 1})")
+                print(f"Making {method.upper()} request to {url} (attempt {attempt + 1})")
                 
                 if method.lower() == 'get':
                     response = self.session.get(url, **kwargs)
@@ -87,14 +87,14 @@ class SiskaScraper:
                 if response.status_code == 429:  # Too Many Requests
                     retry_after = response.headers.get('Retry-After', self.config.retry_delay_base)
                     wait_time = float(retry_after) if isinstance(retry_after, str) else retry_after
-                    print(f"⚠️ Server returned 429 (Too Many Requests). Waiting {wait_time} seconds...")
+                    print(f"Server returned 429 (Too Many Requests). Waiting {wait_time} seconds...")
                     time.sleep(wait_time)
                     continue
                 
                 elif response.status_code >= 500:  # Server errors
                     if attempt < self.config.max_retries:
                         wait_time = self.config.retry_delay_base * (2 ** attempt)  # Exponential backoff
-                        print(f"⚠️ Server error ({response.status_code}). Retrying in {wait_time} seconds...")
+                        print(f"Server error ({response.status_code}). Retrying in {wait_time} seconds...")
                         time.sleep(wait_time)
                         continue
                 
@@ -103,11 +103,11 @@ class SiskaScraper:
             except requests.exceptions.RequestException as e:
                 if attempt < self.config.max_retries:
                     wait_time = self.config.retry_delay_base * (2 ** attempt)
-                    print(f"⚠️ Request failed: {e}. Retrying in {wait_time} seconds...")
+                    print(f"Request failed: {e}. Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)
                     continue
                 else:
-                    print(f"❌ Request failed after {self.config.max_retries + 1} attempts: {e}")
+                    print(f"Request failed after {self.config.max_retries + 1} attempts: {e}")
                     raise
         
         return response
@@ -131,7 +131,7 @@ class SiskaScraper:
     def print_rate_limit_stats(self):
         """Print current rate limiting statistics"""
         stats = self.get_rate_limit_stats()
-        print(f"\n📊 Rate Limit Statistics:")
+        print(f"\nRate Limit Statistics:")
         print(f"  Total requests: {stats['total_requests']}")
         print(f"  Requests in last minute: {stats['requests_last_minute']}/{stats['max_requests_per_minute']}")
         print(f"  Request delay: {stats['request_delay']}s")
@@ -142,7 +142,7 @@ class SiskaScraper:
         if remaining > 0:
             print(f"  Remaining capacity: {remaining} requests")
         else:
-            print(f"  ⚠️ Rate limit reached - requests will be throttled")
+            print(f"  Rate limit reached - requests will be throttled")
     
     def get_login_form_data(self):
         """Get login form data including CSRF token if present"""
