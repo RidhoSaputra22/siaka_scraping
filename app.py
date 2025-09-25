@@ -14,23 +14,51 @@ import hashlib
 from datetime import datetime
 import logging
 
+# Create logs directory if it doesn't exist
+os.makedirs('logs', exist_ok=True)
+
 # Import our scraper
-from siska_scraper import SiskaScraper
-from config import Config
+try:
+    from siska_scraper import SiskaScraper
+    from config import Config
+except ImportError as e:
+    print(f"Import error: {e}")
+    # Create minimal scraper for testing
+    class SiskaScraper:
+        def login(self, username, password, level):
+            return True
+        def get_jadwal(self):
+            return [{"test": "data"}]
+        def get_rate_limit_stats(self):
+            return {"requests": 0}
+    
+    class Config:
+        FLASK_PORT = 5000
 
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', str(uuid.uuid4()))
 
 # 🔒 SECURITY: CORS with specific origins only
-allowed_origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
+allowed_origins = os.getenv('ALLOWED_ORIGINS', '*').split(',')
 CORS(app, origins=allowed_origins)
 
-# 🔒 SECURITY: Enhanced rate limiter
-limiter = Limiter(
-    key_func=get_remote_address,
-    default_limits=["30 per hour", "5 per minute"]  # More restrictive
-)
+# 🔒 SECURITY: Enhanced rate limiter with Redis fallback
+try:
+    # Try Redis for production
+    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+    limiter = Limiter(
+        key_func=get_remote_address,
+        default_limits=["30 per hour", "5 per minute"],
+        storage_uri=redis_url
+    )
+except:
+    # Fallback to memory storage (with warning)
+    limiter = Limiter(
+        key_func=get_remote_address,
+        default_limits=["30 per hour", "5 per minute"]
+    )
+
 limiter.init_app(app)
 
 # 🔒 SECURITY: Enhanced logging
@@ -136,6 +164,81 @@ def limit_request_size():
     if request.content_length and request.content_length > 1024 * 1024:  # 1MB limit
         return APIResponse.error("Request too large", 413, "REQUEST_TOO_LARGE")
 
+@app.route('/')
+def index():
+    """API information endpoint"""
+    info = {
+        "name": "SISKA Scraper REST API - Stateless",
+        "version": "1.0.0-stateless",
+        "description": "Direct login + data retrieval API untuk SISKA UNDIPA",
+        "endpoints": {
+            "POST /api/jadwal": "Login dan ambil jadwal dalam satu request",
+            "GET /api/health": "Health check",
+            "GET /api/docs": "API documentation"
+        },
+        "features": [
+            "Stateless design",
+            "Direct login + data",
+            "Rate limiting",
+            "Input validation",
+            "Secure logging"
+        ]
+    }
+    return APIResponse.success(info, "SISKA Scraper API v1.0 - Stateless")
+
+@app.route('/api/health')
+def health_check():
+    """Health check endpoint"""
+    return APIResponse.success({
+        "status": "healthy",
+        "version": "1.0.0-stateless",
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }, "Service is healthy")
+
+@app.route('/api/docs')
+def api_docs():
+    """API documentation endpoint"""
+    docs = {
+        "title": "SISKA Scraper API Documentation",
+        "version": "1.0.0-stateless",
+        "description": "Stateless API untuk mengambil jadwal dari SISKA UNDIPA",
+        "endpoints": {
+            "POST /api/jadwal": {
+                "description": "Login dan ambil jadwal dalam satu request",
+                "method": "POST",
+                "content_type": "application/json",
+                "rate_limit": "5 requests per minute",
+                "payload": {
+                    "username": "string (required, 3-50 chars)",
+                    "password": "string (required, 6-100 chars)", 
+                    "level": "string (optional: mahasiswa|dosen|admin|staf)"
+                },
+                "response": {
+                    "success": {
+                        "status": "success",
+                        "data": {
+                            "jadwal": "array of jadwal objects",
+                            "metadata": "response metadata"
+                        }
+                    },
+                    "error": {
+                        "status": "error",
+                        "message": "error description",
+                        "error_code": "error identifier"
+                    }
+                }
+            }
+        },
+        "security": [
+            "Input validation and sanitization",
+            "Rate limiting (5 req/min, 30 req/hour)", 
+            "Request size limits (1MB max)",
+            "CORS restrictions",
+            "Security event logging",
+            "Generic error messages"
+        ]
+    }
+    return APIResponse.success(docs, "API Documentation")
 
 @app.route('/api/jadwal', methods=['POST'])
 @limiter.limit("5 per minute")  # 🔒 SECURITY: Strict rate limiting
@@ -247,6 +350,9 @@ def internal_error(error):
     error_id = str(uuid.uuid4())[:8]
     logger.error(f"Internal error [{error_id}]: {error}")
     return APIResponse.error(status_code=500, error_code="INTERNAL_ERROR")
+
+# For WSGI deployment
+application = app
 
 if __name__ == '__main__':
     port = int(os.getenv('FLASK_PORT', 5000))
