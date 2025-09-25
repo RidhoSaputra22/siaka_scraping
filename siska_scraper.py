@@ -4,8 +4,8 @@ import json
 import time
 from datetime import datetime, timedelta
 from collections import deque
-from core.config import Config
-from core.utils import (
+from config import Config
+from utils import (
     save_to_json, save_to_csv, get_timestamp, 
     validate_response, clean_text
 )

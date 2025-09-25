@@ -15,8 +15,8 @@ from datetime import datetime
 import logging
 
 # Import our scraper
-from scraper_engine.siska_scraper import SiskaScraper
-from core.config import Config
+from siska_scraper import SiskaScraper
+from config import Config
 
 # Initialize Flask app
 app = Flask(__name__)
