@@ -656,21 +656,10 @@ if __name__ == '__main__':
     port = int(os.getenv('FLASK_PORT', 5000))
     debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
     
-    # Get storage info for startup message
-    storage_name = "unknown"
-    if isinstance(storage_backend, str):
-        if storage_backend.startswith('redis://'):
-            storage_name = "Redis"
-        elif storage_backend == "memory://":
-            storage_name = "Memory"
-    else:
-        storage_name = "SQLite file"
-    
     print("[INFO] Starting SISKA API Server (Stateless + SSL + UTF-8)...")
     print(f"[INFO] Server will run on http://localhost:{port}")
     print(f"[INFO] API Documentation: http://localhost:{port}/api/docs")
     print("[INFO] Security features: Rate limiting, Input validation, Logging")
-    print(f"[INFO] Rate limiter storage: {storage_name}")
     print("[INFO] SSL certificate error handling enabled")
     print("[INFO] Unicode/UTF-8 support enabled")
     
