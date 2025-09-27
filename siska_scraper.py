@@ -1,7 +1,12 @@
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import urllib3
 from bs4 import BeautifulSoup
 import json
 import time
+import ssl
+import warnings
 from datetime import datetime, timedelta
 from collections import deque
 from config import Config
@@ -9,6 +14,10 @@ from utils import (
     save_to_json, save_to_csv, get_timestamp, 
     validate_response, clean_text
 )
+
+# Suppress SSL warnings for expired certificates
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 class SiskaScraper:
     """SISKA UNDIPA Web Scraper for Jadwal Data"""
@@ -18,11 +27,15 @@ class SiskaScraper:
         self.config = Config(config_file)
         self.session = requests.Session()
         self.is_logged_in = False
+        self.ssl_verified = True  # Track SSL verification status
         
         # Rate limiting tracking
         self.request_times = deque()  # Track request timestamps
         self.last_request_time = None
         self.total_requests = 0
+        
+        # Configure SSL handling first
+        self._configure_ssl_session()
         
         # Set default headers with configured user agent
         self.session.headers.update({
@@ -33,6 +46,39 @@ class SiskaScraper:
             'Connection': 'keep-alive' if self.config.session_keep_alive else 'close',
             'Upgrade-Insecure-Requests': '1',
         })
+    
+    def _configure_ssl_session(self):
+        """Configure session with SSL certificate error handling"""
+        try:
+            print("🔍 Testing SSL connection to SISKA...")
+            # Test SSL connection first
+            test_response = self.session.get(f"{self.config.base_url}/login", verify=True, timeout=15)
+            self.ssl_verified = True
+            print("✅ SSL certificate verified successfully")
+        except (requests.exceptions.SSLError, ssl.SSLError) as e:
+            print(f"⚠️  SSL certificate error: {e}")
+            print("🔧 Disabling SSL verification for this session")
+            print("⚠️  WARNING: SSL verification is disabled - connection may not be secure")
+            self.ssl_verified = False
+            self.session.verify = False
+        except Exception as e:
+            print(f"⚠️  Connection test failed: {e}")
+            print("🔧 Will attempt with SSL disabled")
+            self.ssl_verified = False
+            self.session.verify = False
+        
+        # Configure retry strategy
+        retry_strategy = Retry(
+            total=3,
+            status_forcelist=[429, 500, 502, 503, 504],
+            method_whitelist=["HEAD", "GET", "OPTIONS", "POST"],
+            backoff_factor=2,
+            respect_retry_after_header=True
+        )
+        
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
     
     def _wait_for_rate_limit(self):
         """Implement rate limiting by waiting between requests"""
@@ -76,6 +122,10 @@ class SiskaScraper:
             try:
                 print(f"Making {method.upper()} request to {url} (attempt {attempt + 1})")
                 
+                # Set SSL verification based on current state
+                if not self.ssl_verified:
+                    kwargs['verify'] = False
+                
                 if method.lower() == 'get':
                     response = self.session.get(url, **kwargs)
                 elif method.lower() == 'post':
@@ -100,6 +150,19 @@ class SiskaScraper:
                 
                 return response
                 
+            except (requests.exceptions.SSLError, ssl.SSLError) as e:
+                print(f"SSL Error on attempt {attempt + 1}: {e}")
+                if self.ssl_verified and attempt < self.config.max_retries:
+                    # Switch to non-verified SSL and retry
+                    print("🔧 Switching to non-verified SSL mode")
+                    print("⚠️  WARNING: SSL verification disabled due to certificate error")
+                    self.ssl_verified = False
+                    self.session.verify = False
+                    kwargs['verify'] = False
+                    continue
+                elif attempt >= self.config.max_retries:
+                    raise
+                    
             except requests.exceptions.RequestException as e:
                 if attempt < self.config.max_retries:
                     wait_time = self.config.retry_delay_base * (2 ** attempt)
@@ -143,6 +206,13 @@ class SiskaScraper:
             print(f"  Remaining capacity: {remaining} requests")
         else:
             print(f"  Rate limit reached - requests will be throttled")
+    
+    def get_ssl_status(self):
+        """Get SSL verification status"""
+        return {
+            'ssl_verified': self.ssl_verified,
+            'warning': None if self.ssl_verified else "SSL certificate verification is disabled"
+        }
     
     def get_login_form_data(self):
         """Get login form data including CSRF token if present"""
