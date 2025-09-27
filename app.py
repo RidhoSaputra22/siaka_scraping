@@ -6,7 +6,7 @@ Direct login + data retrieval without session management
 import sys
 import os
 
-# 🔒 ENCODING: Set UTF-8 encoding untuk environment
+# [SECURITY] ENCODING: Set UTF-8 encoding untuk environment
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 # Force UTF-8 encoding untuk Python
@@ -51,7 +51,7 @@ except ImportError as e:
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', str(uuid.uuid4()))
 
-# 🔒 ENCODING: Set Flask to handle Unicode properly
+# [SECURITY] ENCODING: Set Flask to handle Unicode properly
 app.config['JSON_AS_ASCII'] = False  # Allow Unicode in JSON responses
 
 allowed_origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
@@ -63,7 +63,7 @@ limiter = Limiter(
 )
 limiter.init_app(app)
 
-# 🔒 ENCODING: Enhanced logging with UTF-8 support
+# [SECURITY] ENCODING: Enhanced logging with UTF-8 support
 class UTFHandler(logging.FileHandler):
     def __init__(self, filename, mode='a', encoding='utf-8', delay=False):
         super().__init__(filename, mode, encoding, delay)
@@ -395,7 +395,7 @@ def get_jadwal():
             security_logger.warning(f"Invalid password format from IP: {request.remote_addr}")
             return APIResponse.error(password_error, 400, "INVALID_PASSWORD")
 
-        # 🔒 SECURITY: Log attempt (Unicode safe)
+        # [SECURITY] Log attempt (Unicode safe)
         try:
             username_hash = hashlib.sha256(username.encode('utf-8')).hexdigest()[:8]
             logger.info(f"Jadwal request - User hash: {username_hash} - Level: {level} - IP: {request.remote_addr}")
@@ -448,7 +448,7 @@ def get_jadwal():
             logger.info(f"No jadwal data found - User hash: {username_hash}")
             return APIResponse.error("No jadwal data available", 404, "NO_JADWAL_DATA")
         
-        # 🔒 SECURITY: Log successful retrieval (Unicode safe)
+        # [SECURITY] Log successful retrieval (Unicode safe)
         try:
             logger.info(f"Jadwal retrieved - User hash: {username_hash} - Count: {len(jadwal_data)} - IP: {request.remote_addr}")
         except:
@@ -479,13 +479,13 @@ def get_jadwal():
         return APIResponse.success(response_data, "Jadwal retrieved successfully")
         
     except UnicodeEncodeError as e:
-        # 🔒 ENCODING: Handle Unicode errors specifically
+        # [SECURITY] ENCODING: Handle Unicode errors specifically
         error_id = str(uuid.uuid4())[:8]
         logger.error(f"Unicode encoding error [{error_id}]: {str(e)} - IP: {request.remote_addr}")
         return APIResponse.error("Data encoding error", 500, "UNICODE_ERROR")
         
     except Exception as e:
-        # 🔒 SECURITY: Log errors without exposing sensitive details - Unicode safe
+        # [SECURITY] Log errors without exposing sensitive details - Unicode safe
         error_id = str(uuid.uuid4())[:8]
         try:
             logger.error(f"Jadwal error [{error_id}]: {str(e)} - IP: {request.remote_addr}")
@@ -494,7 +494,7 @@ def get_jadwal():
             logger.error(f"Jadwal error [{error_id}]: <Unicode logging error> - IP: {request.remote_addr}")
         return APIResponse.error(status_code=500, error_code="JADWAL_ERROR")
 
-# 🔒 SECURITY: Error handlers with generic messages - Unicode safe
+# [SECURITY] Error handlers with generic messages - Unicode safe
 @app.errorhandler(404)
 def not_found(error):
     return APIResponse.error(status_code=404, error_code="NOT_FOUND")
@@ -519,12 +519,12 @@ if __name__ == '__main__':
     port = int(os.getenv('FLASK_PORT', 5000))
     debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
     
-    print("🚀 Starting SISKA API Server (Stateless + SSL + UTF-8)...")
-    print(f"📡 Server will run on http://localhost:{port}")
-    print(f"📚 API Documentation: http://localhost:{port}/api/docs")
-    print("🔒 Security features: Rate limiting, Input validation, Logging")
-    print("🛡️  SSL certificate error handling enabled")
-    print("🌐 Unicode/UTF-8 support enabled")
+    print("[INFO] Starting SISKA API Server (Stateless + SSL + UTF-8)...")
+    print(f"[INFO] Server will run on http://localhost:{port}")
+    print(f"[INFO] API Documentation: http://localhost:{port}/api/docs")
+    print("[INFO] Security features: Rate limiting, Input validation, Logging")
+    print("[INFO] SSL certificate error handling enabled")
+    print("[INFO] Unicode/UTF-8 support enabled")
     
     app.run(
         host='127.0.0.1' if not debug else '0.0.0.0',  # Localhost only in production

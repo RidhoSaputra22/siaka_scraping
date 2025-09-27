@@ -50,15 +50,15 @@ class SiskaScraper:
     def _configure_ssl_session(self):
         """Configure session with SSL certificate error handling"""
         try:
-            print("🔍 Testing SSL connection to SISKA...")
+            print("[INFO] Testing SSL connection to SISKA...")
             # Test SSL connection first
             test_response = self.session.get(f"{self.config.base_url}/login", verify=True, timeout=15)
             self.ssl_verified = True
-            print("✅ SSL certificate verified successfully")
+            print("[SUCCESS] SSL certificate verified successfully")
         except (requests.exceptions.SSLError, ssl.SSLError) as e:
-            print(f"⚠️  SSL certificate error: {e}")
-            print("🔧 Disabling SSL verification for this session")
-            print("⚠️  WARNING: SSL verification is disabled - connection may not be secure")
+            print(f"[WARNING] SSL certificate error: {e}")
+            print("[INFO] Disabling SSL verification for this session")
+            print("[WARNING] SSL verification is disabled - connection may not be secure")
             self.ssl_verified = False
             self.session.verify = False
         except Exception as e:
@@ -67,11 +67,11 @@ class SiskaScraper:
             self.ssl_verified = False
             self.session.verify = False
         
-        # Configure retry strategy
+        # Configure retry strategy  
         retry_strategy = Retry(
             total=3,
             status_forcelist=[429, 500, 502, 503, 504],
-            method_whitelist=["HEAD", "GET", "OPTIONS", "POST"],
+            allowed_methods=["HEAD", "GET", "OPTIONS", "POST"],
             backoff_factor=2,
             respect_retry_after_header=True
         )
