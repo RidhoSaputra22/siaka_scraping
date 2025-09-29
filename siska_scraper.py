@@ -453,13 +453,13 @@ class SiskaScraper:
                     row_data['row_type'] = 'data'
                     
                     jadwal_list.append(row_data)
-                    print(f"Found jadwal row: {potential_row}")
+                    
                     
                     i += 7  # Skip the TDs we just processed
                     continue
             
             i += 1  # Move to next TD
-        
+        print(f"Found {len(jadwal_list)} entries using Method 1")
         # Method 2: Traditional table parsing (fallback)
         if not jadwal_list:
             print("Method 2: Traditional table parsing...")
