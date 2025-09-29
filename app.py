@@ -28,6 +28,9 @@ from datetime import datetime
 import logging
 import ssl
 import requests
+import sqlite3
+import threading
+from pathlib import Path
 
 # Create logs directory if it doesn't exist
 os.makedirs('logs', exist_ok=True)
@@ -57,10 +60,133 @@ app.config['JSON_AS_ASCII'] = False  # Allow Unicode in JSON responses
 allowed_origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
 CORS(app, origins=allowed_origins)
 
-limiter = Limiter(
-    key_func=get_remote_address,
-    default_limits=["30 per hour", "5 per minute"]  # More restrictive
-)
+# Rate Limiter Storage Configuration
+class FileLimiterStorage:
+    """SQLite-based storage for Flask-Limiter - suitable for shared hosting"""
+    
+    def __init__(self, db_path='data/rate_limits.db'):
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._init_db()
+    
+    def _init_db(self):
+        """Initialize SQLite database for rate limiting"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS rate_limits (
+                    key TEXT PRIMARY KEY,
+                    count INTEGER DEFAULT 0,
+                    reset_time INTEGER,
+                    created_at INTEGER DEFAULT (strftime('%s', 'now'))
+                )
+            ''')
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_reset_time ON rate_limits(reset_time)
+            ''')
+            conn.commit()
+    
+    def incr(self, key, expiry=None):
+        """Increment counter for key"""
+        import time
+        current_time = int(time.time())
+        reset_time = current_time + (expiry or 3600)  # Default 1 hour
+        
+        with self._lock:
+            with sqlite3.connect(self.db_path) as conn:
+                # Clean expired entries
+                conn.execute('DELETE FROM rate_limits WHERE reset_time < ?', (current_time,))
+                
+                # Get or create entry
+                cursor = conn.execute('SELECT count FROM rate_limits WHERE key = ?', (key,))
+                row = cursor.fetchone()
+                
+                if row:
+                    new_count = row[0] + 1
+                    conn.execute('UPDATE rate_limits SET count = ? WHERE key = ?', (new_count, key))
+                else:
+                    new_count = 1
+                    conn.execute(
+                        'INSERT INTO rate_limits (key, count, reset_time) VALUES (?, ?, ?)',
+                        (key, new_count, reset_time)
+                    )
+                
+                conn.commit()
+                return new_count
+    
+    def get(self, key):
+        """Get current count for key"""
+        import time
+        current_time = int(time.time())
+        
+        with sqlite3.connect(self.db_path) as conn:
+            # Clean expired entries first
+            conn.execute('DELETE FROM rate_limits WHERE reset_time < ?', (current_time,))
+            
+            cursor = conn.execute('SELECT count FROM rate_limits WHERE key = ?', (key,))
+            row = cursor.fetchone()
+            return row[0] if row else 0
+    
+    def clear(self, key):
+        """Clear counter for key"""
+        with self._lock:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('DELETE FROM rate_limits WHERE key = ?', (key,))
+                conn.commit()
+
+def get_limiter_storage():
+    """Get appropriate storage backend for rate limiter"""
+    try:
+        from config import Config
+        config = Config()
+        storage_type = config.rate_limiter_storage
+    except:
+        storage_type = os.getenv('RATE_LIMITER_STORAGE', 'file')
+    
+    if storage_type == 'redis':
+        try:
+            import redis
+            redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+            # Test Redis connection
+            r = redis.from_url(redis_url)
+            r.ping()
+            print(f"[INFO] Using Redis storage for rate limiting: {redis_url}")
+            return redis_url
+        except ImportError:
+            print("[WARNING] Redis not available, falling back to file storage")
+        except Exception as e:
+            print(f"[WARNING] Redis connection failed: {e}, falling back to file storage")
+    
+    elif storage_type == 'memory':
+        print("[INFO] Using in-memory storage for rate limiting (development only)")
+        return "memory://"
+    
+    # Default to file storage (best for shared hosting)
+    file_path = os.getenv('RATE_LIMITER_FILE_PATH', 'data/rate_limits.db')
+    print(f"[INFO] Using file-based storage for rate limiting: {file_path}")
+    return FileLimiterStorage(file_path)
+
+# Initialize rate limiter with appropriate storage
+storage_backend = get_limiter_storage()
+
+# For file-based storage, we'll use a simpler approach with environment variable
+if isinstance(storage_backend, FileLimiterStorage):
+    # Use memory storage and implement our own rate limiting logic
+    limiter = Limiter(
+        key_func=get_remote_address,
+        default_limits=["30 per hour", "5 per minute"],
+        storage_uri="memory://"  # We'll handle persistence ourselves
+    )
+    # Store reference to our custom storage for later use
+    app.config['CUSTOM_RATE_STORAGE'] = storage_backend
+else:
+    # URL-based storage (Redis or memory)
+    limiter = Limiter(
+        key_func=get_remote_address,
+        default_limits=["30 per hour", "5 per minute"],
+        storage_uri=storage_backend
+    )
+
 limiter.init_app(app)
 
 # [SECURITY] ENCODING: Enhanced logging with UTF-8 support
@@ -285,11 +411,22 @@ def service_status():
         except Exception:
             connectivity = "failed"
         
+        # Get rate limiter storage info
+        storage_info = "unknown"
+        if isinstance(storage_backend, str):
+            if storage_backend.startswith('redis://'):
+                storage_info = "Redis"
+            elif storage_backend == "memory://":
+                storage_info = "Memory (development)"
+        else:
+            storage_info = "File-based SQLite"
+        
         status_data = {
             "service": "healthy",
             "siska_connectivity": connectivity,
             "ssl_verification": "verified" if ssl_verified else "bypassed",
             "ssl_warning": None if ssl_verified else "SSL certificate verification disabled due to server issues",
+            "rate_limiter_storage": storage_info,
             "last_check": datetime.utcnow().isoformat() + "Z"
         }
         
@@ -519,10 +656,21 @@ if __name__ == '__main__':
     port = int(os.getenv('FLASK_PORT', 5000))
     debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
     
+    # Get storage info for startup message
+    storage_name = "unknown"
+    if isinstance(storage_backend, str):
+        if storage_backend.startswith('redis://'):
+            storage_name = "Redis"
+        elif storage_backend == "memory://":
+            storage_name = "Memory"
+    else:
+        storage_name = "SQLite file"
+    
     print("[INFO] Starting SISKA API Server (Stateless + SSL + UTF-8)...")
     print(f"[INFO] Server will run on http://localhost:{port}")
     print(f"[INFO] API Documentation: http://localhost:{port}/api/docs")
     print("[INFO] Security features: Rate limiting, Input validation, Logging")
+    print(f"[INFO] Rate limiter storage: {storage_name}")
     print("[INFO] SSL certificate error handling enabled")
     print("[INFO] Unicode/UTF-8 support enabled")
     

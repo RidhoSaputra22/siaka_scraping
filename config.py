@@ -30,12 +30,23 @@ class Config:
         self.respect_robots_txt = bool(os.getenv('SISKA_RESPECT_ROBOTS', 'True').lower() == 'true')
         self.user_agent = os.getenv('SISKA_USER_AGENT', 'SiskaScraper/1.0 (+https://github.com/your-repo)')
         
+        # Rate Limiter Storage Configuration
+        self.rate_limiter_storage = os.getenv('RATE_LIMITER_STORAGE', 'file')  # file, redis, memory
+        self.redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+        self.rate_limiter_file_path = os.getenv('RATE_LIMITER_FILE_PATH', 'data/rate_limits.db')
+        
         # Output settings
         self.output_dir = os.getenv('OUTPUT_DIR', 'data')
         self.default_format = os.getenv('DEFAULT_FORMAT', 'json')
         
         # Create output directory if not exists
         os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Create rate limiter directory if using file storage
+        if self.rate_limiter_storage == 'file':
+            rate_limiter_dir = os.path.dirname(self.rate_limiter_file_path)
+            if rate_limiter_dir:
+                os.makedirs(rate_limiter_dir, exist_ok=True)
     
     def validate_credentials(self):
         """Validate that required credentials are set"""
