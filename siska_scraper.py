@@ -526,9 +526,6 @@ class SiskaScraper:
         
         print(f"Total extracted entries: {len(jadwal_list)}")
         
-        # Debug output
-        for i, entry in enumerate(jadwal_list[:3]):
-            print(f"Entry {i+1}: {entry}")
         
         return jadwal_list
     
