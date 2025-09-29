@@ -120,7 +120,8 @@ class SiskaScraper:
         
         for attempt in range(self.config.max_retries + 1):
             try:
-                print(f"Making {method.upper()} request to {url} (attempt {attempt + 1})")
+                print(f"Making {method.upper()} request (attempt {attempt + 1})")
+                # Note: URL details not logged for security
                 
                 # Set SSL verification based on current state
                 if not self.ssl_verified:
@@ -254,6 +255,7 @@ class SiskaScraper:
                 raise ValueError("Username and password are required")
             
             print("Getting login form...")
+            print("[SECURITY] Credentials validated - proceeding with secure login")
             form_data, soup = self.get_login_form_data()
             
             # Update form data with credentials
@@ -300,11 +302,11 @@ class SiskaScraper:
             form_data['btnLogin'] = 'Sign In'
             
             print("Attempting login...")
-            print(f"Username: {username}")
-            print(f"Password: {password}")
-            print(f"Level: {level}")
+            print("Credentials provided - processing login form")
+            # Note: Credentials not logged for security
 
-            print(f"form-data: {form_data}")
+            print("Credentials provided - processing login form")
+            # Note: Credentials not logged for security
 
             # Submit login form
             response = self._make_request(
@@ -314,7 +316,7 @@ class SiskaScraper:
                 allow_redirects=True
             )
             
-            print(f"response: {response}")
+            # Note: Response details not logged for security
             
             validate_response(response)
             
@@ -324,14 +326,14 @@ class SiskaScraper:
                 print("Login successful!")
                 return True
             else:
-                print("Login failed!")
-                print("Response URL:", response.url)
-                print("Response text preview:", response.text[:500])
+                print("Login failed - invalid credentials or server error")
+                # Note: Response details not logged for security
                 return False
                 
         except Exception as e:
-            print(f"Login error: {e}")
-            raise
+            print(f"Login error occurred - check credentials and connection")
+            # Note: Error details not logged for security
+            raise Exception("Login failed - authentication error")
     
     def _check_login_success(self, response):
         """Check if login was successful"""

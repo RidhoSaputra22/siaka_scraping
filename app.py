@@ -476,10 +476,11 @@ def api_docs():
             "Rate limiting (5 req/min, 30 req/hour)", 
             "Request size limits (1MB max)",
             "CORS restrictions",
-            "Security event logging",
+            "Security event logging (no sensitive data)",
             "Generic error messages",
             "SSL certificate error handling",
-            "Unicode/UTF-8 support"
+            "Unicode/UTF-8 support",
+            "Session-based tracking (anonymous)"
         ],
         "ssl_handling": {
             "description": "API automatically handles SSL certificate issues",
@@ -532,14 +533,15 @@ def get_jadwal():
             security_logger.warning(f"Invalid password format from IP: {request.remote_addr}")
             return APIResponse.error(password_error, 400, "INVALID_PASSWORD")
 
-        # [SECURITY] Log attempt (Unicode safe)
+        # [SECURITY] Log attempt without sensitive data
         try:
-            username_hash = hashlib.sha256(username.encode('utf-8')).hexdigest()[:8]
-            logger.info(f"Jadwal request - User hash: {username_hash} - Level: {level} - IP: {request.remote_addr}")
+            # Generate session ID untuk tracking tanpa expose data user
+            session_id = str(uuid.uuid4())[:8]
+            logger.info(f"Jadwal request initiated - Session: {session_id} - IP: {request.remote_addr}")
         except Exception as e:
             logger.warning(f"Logging error (Unicode): {e}")
-            username_hash = "hash_error"
-            logger.info(f"Jadwal request - IP: {request.remote_addr}")
+            session_id = "session_error"
+            logger.info(f"Jadwal request initiated - IP: {request.remote_addr}")
         
         # Initialize scraper with SSL error handling
         try:
@@ -563,7 +565,7 @@ def get_jadwal():
         
         if not login_success:
             try:
-                security_logger.warning(f"Login failed - User hash: {username_hash} - IP: {request.remote_addr}")
+                security_logger.warning(f"Login failed - Session: {session_id} - IP: {request.remote_addr}")
             except:
                 security_logger.warning(f"Login failed - IP: {request.remote_addr}")
             return APIResponse.error(status_code=401, error_code="LOGIN_FAILED")
@@ -582,12 +584,12 @@ def get_jadwal():
             return APIResponse.error("Jadwal service unavailable", 503, "JADWAL_SERVICE_ERROR")
         
         if not jadwal_data:
-            logger.info(f"No jadwal data found - User hash: {username_hash}")
+            logger.info(f"No jadwal data found - Session: {session_id}")
             return APIResponse.error("No jadwal data available", 404, "NO_JADWAL_DATA")
         
-        # [SECURITY] Log successful retrieval (Unicode safe)
+        # [SECURITY] Log successful retrieval without sensitive data
         try:
-            logger.info(f"Jadwal retrieved - User hash: {username_hash} - Count: {len(jadwal_data)} - IP: {request.remote_addr}")
+            logger.info(f"Jadwal retrieved successfully - Session: {session_id} - Count: {len(jadwal_data)} - IP: {request.remote_addr}")
         except:
             logger.info(f"Jadwal retrieved - Count: {len(jadwal_data)} - IP: {request.remote_addr}")
         
@@ -597,13 +599,13 @@ def get_jadwal():
         except:
             rate_stats = None
         
-        # Prepare response - Unicode safe
+        # Prepare response - Unicode safe, tanpa data sensitif
         response_data = {
             'jadwal': jadwal_data,
             'metadata': {
                 'retrieved_at': datetime.utcnow().isoformat() + "Z",
                 'count': len(jadwal_data) if isinstance(jadwal_data, list) else 1,
-                'level': level,
+                'session_id': session_id,
                 'rate_stats': rate_stats,
                 'ssl_status': 'handled',
                 'encoding': 'UTF-8'
