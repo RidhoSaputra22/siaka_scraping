@@ -358,6 +358,7 @@ def index():
         "version": "1.0.0-stateless-ssl",
         "description": "Direct login + data retrieval API untuk SISKA UNDIPA",
         "endpoints": {
+            "POST /api/login": "Login ke SISKA untuk verifikasi kredensial dan ambil info user",
             "POST /api/jadwal": "Login dan ambil jadwal dalam satu request",
             "GET /api/health": "Health check",
             "GET /api/status": "Service status including SSL info",
@@ -445,6 +446,38 @@ def api_docs():
         "description": "Stateless API untuk mengambil jadwal dari SISKA UNDIPA dengan SSL handling",
         "base_url": request.host_url.rstrip('/'),
         "endpoints": {
+            "POST /api/login": {
+                "description": "Login ke SISKA untuk verifikasi kredensial dan ambil info user",
+                "method": "POST",
+                "content_type": "application/json",
+                "rate_limit": "5 requests per minute",
+                "payload": {
+                    "username": "string (required, 3-50 chars)",
+                    "password": "string (required, 6-100 chars)", 
+                    "level": "string (optional: mahasiswa|dosen|admin|staf)"
+                },
+                "response": {
+                    "success": {
+                        "status": "success",
+                        "data": {
+                            "login_status": "authenticated",
+                            "user_info": {
+                                "name": "User full name",
+                                "username": "Username/NIM/NIDN",
+                                "level": "User level/role",
+                                "nim_nidn": "NIM/NIDN number",
+                                "email": "Email if available"
+                            },
+                            "metadata": "response metadata including SSL info"
+                        }
+                    },
+                    "error": {
+                        "status": "error",
+                        "message": "error description",
+                        "error_code": "error identifier"
+                    }
+                }
+            },
             "POST /api/jadwal": {
                 "description": "Login dan ambil jadwal dalam satu request",
                 "method": "POST",
@@ -633,7 +666,155 @@ def get_jadwal():
             logger.error(f"Jadwal error [{error_id}]: <Unicode logging error> - IP: {request.remote_addr}")
         return APIResponse.error(status_code=500, error_code="JADWAL_ERROR")
 
-# [SECURITY] Error handlers with generic messages - Unicode safe
+
+@app.route('/api/login', methods=['POST'])
+@limiter.limit("5 per minute") 
+def check_login():
+    """
+    Login endpoint: Verifikasi kredensial login ke SISKA
+    Enhanced with SSL and Unicode error handling
+    
+    Expected JSON payload:
+    {
+        "username": "your_username",
+        "password": "your_password", 
+        "level": "mahasiswa"  // optional, default: mahasiswa
+    }
+    
+    Returns login verification result (no jadwal data)
+    """
+    try:
+        if not request.is_json:
+            return APIResponse.error("Content-Type must be application/json", 400, "INVALID_CONTENT_TYPE")
+        
+        data = request.get_json()
+        if not isinstance(data, dict):
+            return APIResponse.error("Invalid JSON payload", 400, "INVALID_PAYLOAD")
+
+        raw_username = data.get('username', '')
+        raw_password = data.get('password', '')
+        raw_level = data.get('level', 'mahasiswa')
+
+        username = SecurityValidator.sanitize_input(raw_username, 50)
+        password = raw_password  # Don't sanitize password (may contain special chars)
+        level, level_warning = SecurityValidator.validate_level(raw_level)
+
+        username_valid, username_error = SecurityValidator.validate_username(username)
+        if not username_valid:
+            security_logger.warning(f"Invalid username from IP: {request.remote_addr}")
+            return APIResponse.error(username_error, 400, "INVALID_USERNAME")
+
+        password_valid, password_error = SecurityValidator.validate_password(password)
+        if not password_valid:
+            security_logger.warning(f"Invalid password format from IP: {request.remote_addr}")
+            return APIResponse.error(password_error, 400, "INVALID_PASSWORD")
+
+        # [SECURITY] Log attempt without sensitive data
+        try:
+            # Generate session ID untuk tracking tanpa expose data user
+            session_id = str(uuid.uuid4())[:8]
+            logger.info(f"Login check request initiated - Session: {session_id} - IP: {request.remote_addr}")
+        except Exception as e:
+            logger.warning(f"Logging error (Unicode): {e}")
+            session_id = "session_error"
+            logger.info(f"Login check request initiated - IP: {request.remote_addr}")
+        
+        # Initialize scraper with SSL error handling
+        try:
+            scraper = SiskaScraper()
+        except Exception as e:
+            logger.error(f"Scraper initialization error: {e}")
+            return APIResponse.error("Service initialization error", 500, "SCRAPER_INIT_ERROR")
+        
+        # Attempt login with SSL error handling
+        try:
+            login_success = scraper.login(username, password, level)
+        except (ssl.SSLError, requests.exceptions.SSLError) as ssl_error:
+            logger.warning(f"SSL certificate error during login: {ssl_error}")
+            return APIResponse.error("Server certificate issue - please try again later", 503, "SSL_CERTIFICATE_ERROR")
+        except requests.exceptions.ConnectionError as conn_error:
+            logger.error(f"Connection error during login: {conn_error}")
+            return APIResponse.error("Unable to connect to SISKA server", 503, "CONNECTION_ERROR")
+        except Exception as login_error:
+            logger.error(f"Login error: {login_error}")
+            return APIResponse.error("Login service unavailable", 503, "LOGIN_SERVICE_ERROR")
+        
+        if not login_success:
+            try:
+                security_logger.warning(f"Login verification failed - Session: {session_id} - IP: {request.remote_addr}")
+            except:
+                security_logger.warning(f"Login verification failed - IP: {request.remote_addr}")
+            return APIResponse.error(status_code=401, error_code="LOGIN_FAILED")
+        
+        # Get user information after successful login
+        user_info = {}
+        try:
+            user_info = scraper.get_user_info()
+            logger.info(f"User info extracted - Session: {session_id}")
+        except Exception as user_error:
+            logger.warning(f"Could not extract user info - Session: {session_id}: {user_error}")
+            # Don't fail the login if user info extraction fails
+            user_info = {
+                'name': None,
+                'username': None,
+                'level': None,
+                'nim_nidn': None,
+                'email': None,
+                'extraction_error': 'User info could not be extracted'
+            }
+        
+        # [SECURITY] Log successful login verification without sensitive data
+        try:
+            logger.info(f"Login verified successfully - Session: {session_id} - IP: {request.remote_addr}")
+        except:
+            logger.info(f"Login verified - IP: {request.remote_addr}")
+        
+        # Get SSL status for response metadata
+        try:
+            ssl_status = scraper.get_ssl_status()
+        except:
+            ssl_status = {"ssl_verified": False, "warning": "SSL status unknown"}
+        
+        # Get rate limiting stats (optional)
+        try:
+            rate_stats = scraper.get_rate_limit_stats()
+        except:
+            rate_stats = None
+        
+        # Prepare response - Unicode safe, tanpa data sensitif
+        response_data = {
+            'login_status': 'authenticated',
+            'level': level,
+            'user_info': user_info,
+            'metadata': {
+                'verified_at': datetime.utcnow().isoformat() + "Z",
+                'session_id': session_id,
+                'rate_stats': rate_stats,
+                'ssl_status': ssl_status,
+                'encoding': 'UTF-8'
+            }
+        }
+        
+        if level_warning:
+            response_data['metadata']['warning'] = level_warning
+        
+        return APIResponse.success(response_data, "Login credentials verified successfully")
+        
+    except UnicodeEncodeError as e:
+        # [SECURITY] ENCODING: Handle Unicode errors specifically
+        error_id = str(uuid.uuid4())[:8]
+        logger.error(f"Unicode encoding error [{error_id}]: {str(e)} - IP: {request.remote_addr}")
+        return APIResponse.error("Data encoding error", 500, "UNICODE_ERROR")
+        
+    except Exception as e:
+        # [SECURITY] Log errors without exposing sensitive details - Unicode safe
+        error_id = str(uuid.uuid4())[:8]
+        try:
+            logger.error(f"Login check error [{error_id}]: {str(e)} - IP: {request.remote_addr}")
+        except UnicodeEncodeError:
+            # Fallback logging for Unicode errors
+            logger.error(f"Login check error [{error_id}]: <Unicode logging error> - IP: {request.remote_addr}")
+        return APIResponse.error(status_code=500, error_code="LOGIN_CHECK_ERROR")# [SECURITY] Error handlers with generic messages - Unicode safe
 @app.errorhandler(404)
 def not_found(error):
     return APIResponse.error(status_code=404, error_code="NOT_FOUND")

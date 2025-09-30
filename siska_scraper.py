@@ -28,6 +28,7 @@ class SiskaScraper:
         self.session = requests.Session()
         self.is_logged_in = False
         self.ssl_verified = True  # Track SSL verification status
+        self.login_response = None  # Store login response for user info extraction
         
         # Rate limiting tracking
         self.request_times = deque()  # Track request timestamps
@@ -323,6 +324,7 @@ class SiskaScraper:
             # Check if login was successful
             if self._check_login_success(response):
                 self.is_logged_in = True
+                self.login_response = response  # Store response for user info extraction
                 print("Login successful!")
                 return True
             else:
@@ -382,6 +384,200 @@ class SiskaScraper:
                 return False
             
         return True
+    
+    def get_user_info(self):
+        """Extract user information from the dashboard page after successful login"""
+        if not self.is_logged_in:
+            raise Exception("Must login first before accessing user information")
+        
+        try:
+            print("Fetching user information from dashboard...")
+            
+            # Try multiple URLs to find user info
+            possible_urls = [
+                self.config.base_url,  # Main page
+                f"{self.config.base_url}/",  # Root with slash
+                f"{self.config.base_url}/dashboard",  # Dashboard
+                f"{self.config.base_url}/main",  # Main page
+                f"{self.config.base_url}/home",  # Home page
+                f"{self.config.base_url}/index.php",  # Index page
+            ]
+            
+            user_info = {
+                'name': None,
+                'username': None,
+                'level': None,
+                'nim_nidn': None,
+                'email': None,
+                'found_on_page': None
+            }
+            
+            for url in possible_urls:
+                try:
+                    print(f"Checking page: {url}")
+                    response = self._make_request('get', url)
+                    
+                    if response.status_code == 200:
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        
+                        # Extract user info from various possible elements
+                        extracted_info = self._extract_user_info_from_page(soup, url)
+                        
+                        if extracted_info['name'] or extracted_info['username']:
+                            user_info.update(extracted_info)
+                            user_info['found_on_page'] = url
+                            print(f"User info found on: {url}")
+                            break
+                            
+                except Exception as e:
+                    print(f"Error checking {url}: {e}")
+                    continue
+            
+            if not user_info['name'] and not user_info['username']:
+                print("User info not found on any standard pages, trying to extract from any available content")
+                # Fallback: try to get any available page content
+                try:
+                    response = self._make_request('get', self.config.base_url)
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    user_info = self._extract_user_info_from_page(soup, self.config.base_url)
+                    user_info['found_on_page'] = self.config.base_url
+                except:
+                    pass
+            
+            return user_info
+            
+        except Exception as e:
+            print(f"Error getting user info: {e}")
+            raise
+    
+    def _extract_user_info_from_page(self, soup, page_url):
+        """Extract user information from HTML page content"""
+        user_info = {
+            'name': None,
+            'username': None,
+            'level': None,
+            'nim_nidn': None,
+            'email': None
+        }
+        
+        try:
+            # Method 1: Look for common patterns in text content
+            page_text = soup.get_text()
+            
+            # Look for patterns like "Selamat datang, [Name]" or "Welcome, [Name]"
+            import re
+            
+            # Pattern untuk nama setelah greeting
+            greeting_patterns = [
+                r'selamat\s+datang,?\s+([^,\n\r]+)',
+                r'welcome,?\s+([^,\n\r]+)',
+                r'halo,?\s+([^,\n\r]+)',
+                r'hai,?\s+([^,\n\r]+)',
+                r'nama\s*:\s*([^,\n\r]+)',
+            ]
+            
+            for pattern in greeting_patterns:
+                match = re.search(pattern, page_text, re.IGNORECASE)
+                if match:
+                    potential_name = match.group(1).strip()
+                    if len(potential_name) > 2 and len(potential_name) < 100:
+                        user_info['name'] = potential_name
+                        print(f"Found name via greeting pattern: {potential_name}")
+                        break
+            
+            # Method 2: Look for specific HTML elements
+            # Common selectors for user info
+            selectors_to_try = [
+                # Profile/user specific
+                '.user-name', '.username', '.profile-name', '.user-profile',
+                '#username', '#user-name', '#profile-name',
+                
+                # Navigation/header elements
+                '.navbar .user', '.header .user', '.top-nav .user',
+                '.user-info', '.profile-info', '.account-info',
+                
+                # Welcome elements
+                '.welcome', '.greeting', '.user-welcome',
+                
+                # Specific to academic systems
+                '.student-name', '.lecturer-name', '.staff-name',
+                '.nim', '.nidn', '.nip',
+                
+                # Generic containers that might have user info
+                '.container .user', '.content .user', '.main .user'
+            ]
+            
+            for selector in selectors_to_try:
+                try:
+                    elements = soup.select(selector)
+                    for element in elements:
+                        text = element.get_text().strip()
+                        if text and len(text) > 2 and len(text) < 100:
+                            # Skip common non-user text
+                            skip_texts = ['login', 'logout', 'home', 'beranda', 'dashboard', 'menu']
+                            if not any(skip in text.lower() for skip in skip_texts):
+                                if not user_info['name']:
+                                    user_info['name'] = text
+                                    print(f"Found name via selector {selector}: {text}")
+                                break
+                except:
+                    continue
+            
+            # Method 3: Look for table rows with user information
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all(['td', 'th'])
+                    if len(cells) >= 2:
+                        label = cells[0].get_text().strip().lower()
+                        value = cells[1].get_text().strip()
+                        
+                        if 'nama' in label and not user_info['name']:
+                            user_info['name'] = value
+                        elif 'username' in label and not user_info['username']:
+                            user_info['username'] = value
+                        elif ('nim' in label or 'nidn' in label or 'nip' in label) and not user_info['nim_nidn']:
+                            user_info['nim_nidn'] = value
+                        elif 'email' in label and not user_info['email']:
+                            user_info['email'] = value
+                        elif ('level' in label or 'status' in label or 'jenis' in label) and not user_info['level']:
+                            user_info['level'] = value
+            
+            # Method 4: Look for spans or divs with specific text patterns
+            all_elements = soup.find_all(['span', 'div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'strong', 'b'])
+            for element in all_elements:
+                text = element.get_text().strip()
+                
+                # Look for NIM/NIDN patterns
+                nim_pattern = r'\b(?:nim|nidn|nip)\s*:?\s*([0-9]{8,})'
+                match = re.search(nim_pattern, text, re.IGNORECASE)
+                if match and not user_info['nim_nidn']:
+                    user_info['nim_nidn'] = match.group(1)
+                
+                # Look for email patterns
+                email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+                match = re.search(email_pattern, text)
+                if match and not user_info['email']:
+                    user_info['email'] = match.group(0)
+            
+            # Clean up the extracted data
+            for key, value in user_info.items():
+                if value:
+                    # Remove extra whitespace and clean the value
+                    cleaned_value = ' '.join(value.split())
+                    # Remove common prefixes
+                    for prefix in ['nama:', 'name:', 'username:', 'email:']:
+                        if cleaned_value.lower().startswith(prefix):
+                            cleaned_value = cleaned_value[len(prefix):].strip()
+                    user_info[key] = cleaned_value
+            
+            print(f"Extracted user info: {user_info}")
+            return user_info
+            
+        except Exception as e:
+            print(f"Error extracting user info from page: {e}")
+            return user_info
     
     def get_jadwal(self):
         """Scrape jadwal data from SISKA"""
